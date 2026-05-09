@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Swaroop's AI Vision Portal</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: #161b22; padding: 40px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); width: 400px; border: 1px solid #30363d; text-align: center; }
+        h1 { color: #58a6ff; margin-bottom: 5px; }
+        #status { margin: 20px 0; color: #8b949e; font-style: italic; font-size: 14px; }
+        #result { font-size: 20px; color: #39d353; font-weight: bold; background: #010409; padding: 20px; border-radius: 10px; border: 1px dashed #30363d; min-height: 50px; }
+        .btn { background: #238636; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; width: 100%; font-weight: bold; }
+        .btn:hover { background: #2ea043; }
+        input[type="file"] { margin-bottom: 20px; color: #8b949e; }
+        
+        /* New Styles for Image Preview */
+        #previewBox { 
+            margin-top: 20px; 
+            width: 100%; 
+            max-height: 250px; 
+            border-radius: 10px; 
+            border: 1px solid #30363d; 
+            display: none; 
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>🔍 AI Vision</h1>
+    <p style="color: #8b949e;">No-Library Cloud Edition</p>
+    
+    <input type="file" id="imageInput" accept="image/*">
+    <button class="btn" onclick="startAnalysis()">Upload & Analyze</button>
+
+    <!-- Image Preview Element -->
+    <img id="previewBox" alt="Uploaded Image Preview">
+
+    <div id="status">System Ready (Zero-Library Mode)</div>
+    <div id="result">Result will appear here...</div>
+</div>
+
+<script>
+    // Configuration - Using your provided SAS Token
+    const SAS_TOKEN = <Paste sas token here>;
+    const STORAGE_ACCOUNT =  <Paste storage account name here>>;
+
+    async function startAnalysis() {
+        const status = document.getElementById('status');
+        const resultDiv = document.getElementById('result');
+        const file = document.getElementById('imageInput').files[0];
+        const previewBox = document.getElementById('previewBox');
+
+        if (!file) return alert("Select an image first!");
+        
+        // Show the image on frontend
+        previewBox.src = URL.createObjectURL(file);
+        previewBox.style.display = "block";
+
+        // Clean name for Table Storage RowKey
+        const cleanName = file.name.replace(/[^a-zA-Z0-9]/g, '_');
+        
+        try {
+            // --- STEP 1: UPLOAD (RAW PUT REQUEST) ---
+            status.innerText = "🚀 Uploading to Blob...";
+            
+            const uploadUrl = `https://${STORAGE_ACCOUNT}.blob.core.windows.net/images/${file.name}${SAS_TOKEN}`;
+
+            const uploadResponse = await fetch(uploadUrl, {
+                method: 'PUT',
+                body: file,
+                headers: {
+                    'x-ms-blob-type': 'BlockBlob',
+                    'Content-Type': file.type
+                }
+            });
+
+            if (!uploadResponse.ok) throw new Error(`Upload failed: ${uploadResponse.statusText}`);
+
+            // --- STEP 2: POLL TABLE (RAW GET REQUEST) ---
+            status.innerText = "🧠 Image uploaded! AI is thinking...";
+            resultDiv.innerText = "Waiting for description...";
+            
+            // This is the raw URL to check a specific row in Azure Tables
+            const tableUrl = `https://${STORAGE_ACCOUNT}.table.core.windows.net/results(PartitionKey='Images',RowKey='${cleanName}')${SAS_TOKEN}`;
+
+            let attempts = 0;
+            const poll = setInterval(async () => {
+                attempts++;
+                try {
+                    const response = await fetch(tableUrl, {
+                        headers: { 'Accept': 'application/json;odata=nometadata' }
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.description) {
+                            clearInterval(poll);
+                            status.innerText = "✅ Analysis Complete!";
+                            resultDiv.innerText = data.description;
+                        }
+                    }
+                } catch (e) {
+                    console.log("Still waiting for AI...");
+                }
+
+                if (attempts > 25) {
+                    clearInterval(poll);
+                    status.innerText = "❌ Timeout - Check Azure Function Logs";
+                }
+            }, 2000);
+
+        } catch (err) {
+            status.innerText = "❌ Error: " + err.message;
+            console.error(err);
+        }
+    }
+</script>
+</body>
+</html>
